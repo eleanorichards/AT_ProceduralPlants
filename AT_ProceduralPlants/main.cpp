@@ -1,354 +1,629 @@
-#pragma once
-#include <Windows.h>
+
+//////////////////////////////////////////
+//                                      //
+// OpenGL in a PROPER Windows APP       //
+// ( NO GLUT !! )                       //
+//                                      //
+// You found this at bobobobo's weblog, //
+// https://bobobobo.wordpress.com        //
+//                                      //
+// Creation date:  Feb 9/08             //
+// Last modified:  Feb 10/08            //
+//                                      //
+//////////////////////////////////////////
+
+#include <windows.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
 #include <GL\glew.h>
-#include <gl\GL.h>
-#include <gl\GLU.h>
 
-//Set up variables
-HGLRC           hRC = NULL;										// Permanent Rendering Context
-HDC             hDC = NULL;										// Private GDI Device Context
-HWND            hWnd = NULL;									// Holds Our Window Handle
-HINSTANCE       hInstance;										// Holds The Instance Of The Application
+#pragma comment(lib, "opengl32.lib")
+#pragma comment(lib, "glu32.lib")
 
-bool    keys[256];												// Array Used For The Keyboard Routine
-bool    active = TRUE;											// Window Active Flag Set To TRUE By Default
-bool    fullscreen = TRUE;										// Fullscreen Flag Set To Fullscreen Mode By Default
+//////////////////////////
+// OVERVIEW:
+//
+// The OUTPUT of OpenGL is a two dimensional
+// PICTURE of a 3D scene.
 
-LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);           // Declaration For WndProc
+// That's right.  I said 2D.
 
-GLvoid ReSizeGLScene(GLsizei width, GLsizei height)             // Resize And Initialize The GL Window
+// People often say that the process OpenGL
+// goes through to render a 3D scene is just like
+// a CAMERA TAKING A PHOTOGRAPH OF A REAL WORLD SCENE.
+//
+// So, you know obviously that a PHOTOGRAPH
+// is PURELY 2D after its been developed,
+// and it DEPICTS the 3D scene that it
+// "took a picture" of accurately.
+
+// That's exactly what OpenGL does.  OpenGL's JOB
+// is to take all your instructions, all your
+// glColor3f()'s and your glVertex3f()'s, and
+// to ultimately end up DRAWING A 2D PICTURE
+// from those instructions that can be displayed
+// on a computer screen.
+
+// In THIS program, our MAIN GOAL is to
+// CONNECT UP the OUTPUT of OpenGL (that 2D
+// image OpenGL produces)
+// with YOUR APPLICATION'S WINDOW.
+
+// Does this look familiar?
+
+/*
+HDC hdc = GetDC( hwnd );
+*/
+
+// You should already know that the way
+// you as a Windows programmer draw to
+// your application's window is using
+// your window's HDC.
+
+// If this doesn't sound familiar,
+// then I strongly recommend you go read up
+// on Win GDI before continuing!
+
+////////////////////////////////!
+//
+// So if our way to draw to our application window
+// is the HDC, and OpenGL produces some 2D image
+// HOW IN THE WORLD DO YOU CONNECT UP the OUTPUT
+// of the OpenGL program (that 2D picture)
+// WITH the HDC of a WINDOW?
+//
+// That's the main subject we're tackling here
+// in this tutorial.
+//
+// And its EASY.
+//
+// WE'RE lucky.  Microsoft created a bunch
+// of functions (all beginning with "wgl"),
+// that make this job of "connecting up" the output
+// of OpenGL with the HDC of our window quite easy!
+
+/////////////////////////
+// BIG PICTURE:
+//
+// Here's the big picture of what
+// we're going to be doing here:
+
+/*
+
+|---------|  draws to   |-------|  copied out   |---------|  shows in  |-----------|
+|         | ==========> |       | ============> |         | =========> |           |
+|---------|             |-------|               |---------|            |-----------|
+OPENGL                  HGLRC                     HDC                 application
+FUNCTION                                                                 window
+CALLS
+
+*/
+
+//////////////////////
+// In code:  this is the steps
+// we'll follow.
+//
+// 1.  CREATE WINDOW AS USUAL.
+//
+// 2.  GET DC OF WINDOW.
+//     Get the HDC of our window using a line like:
+//          hdc = GetDC( hwnd );
+//
+// 3.  SET PIXEL FORMAT OF HDC.
+//     You do 3 things here:
+//          Create a PFD ('pixel format descriptor')
+//          ChoosePixelFormat()
+//          SetPixelFormat()
+//
+// 4.  CREATE RENDERING CONTEXT (HGLRC).
+//          wglCreateContext()
+//     Create the surface to which OpenGL
+//     shall draw.  It is created such that
+//     it shall be completely compatible
+//     with the DC of our window, (it will
+//     use the same pixel format!)
+//
+// 5.  CONNECT THE RENDER CONTEXT (HGLRC)
+//     WITH THE DEVICE CONTEXT (HDC) OF WINDOW.
+//          wglMakeCurrent()
+//
+// 6.  DRAW USING OPENGL.
+//          glVertex3d(); glColor3d(); // ETC!
+//     You call OpenGL functions to perform
+//     your drawing!  OpenGL will spit out
+//     its result picture to the HGLRC, which is
+//     connected to the backbuffer of your HDC.
+//
+// 7.  SWAP BUFFERS.
+//          SwapBuffers( hdc );	
+//     Assuming you've picked a DOUBLE BUFFERED
+//     pixel format all the way back in step 2, 
+//     you'll need to SWAP the buffers so that
+//     the image you've created using OpenGL on
+//     the backbuffer of your hdc is shown
+//     in your application window.
+
+// And that's all!
+
+// Ready for the code??? Let's go!
+
+/////////////////////
+// GLOBALS
+//
+/// Define a structure to hold all
+/// of the global variables of this app.
+struct Globals
 {
-	if (height == 0)											// Prevent A Divide By Zero By
-	{
-		height = 1;												// Making Height Equal One
-	}
+	HINSTANCE hInstance;    // window app instance
 
-	glViewport(0, 0, width, height);							// Reset The Current Viewport
-	glMatrixMode(GL_PROJECTION);								// Select The Projection Matrix
-	glLoadIdentity();											// Reset The Projection Matrix
-		
-																// Calculate The Aspect Ratio Of The Window
-	gluPerspective(45.0f, (GLfloat)width / (GLfloat)height, 0.1f, 100.0f);
+	HWND hwnd;      // handle for the window
 
-	glMatrixMode(GL_MODELVIEW);									// Select The Modelview Matrix
-	glLoadIdentity();											// Reset The Modelview Matrix
-}
+	HDC   hdc;      // handle to device context
 
-//this is PROBLEM
-int InitGL(GLvoid)
+	HGLRC hglrc;    // handle to OpenGL rendering context
+
+	int width, height;      // the desired width and
+							// height of the CLIENT AREA
+							// (DRAWABLE REGION in Window)
+};
+
+// declare one struct Globals called g;
+Globals g;
+
+
+// Function prototypes.
+LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR szCmdLine, int iCmdShow);
+void draw();            // drawing function containing OpenGL function calls
+
+						
+// In a C++ Windows app, the starting point is WinMain().
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR szCmdLine, int iCmdShow)
 {
-	glShadeModel(GL_SMOOTH);									//enables smooth shading
-	glClearColor(0.0f, 0.5f, 0.0f, 0.5f);						// dark green Background
-	glClearDepth(1.0f);											// Depth Buffer Setup
-	glEnable(GL_DEPTH_TEST);									// Enables Depth Testing
-	glDepthFunc(GL_LEQUAL);										// The Type Of Depth Test To Do
-	glHint(GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST);          // Really Nice Perspective Calculations
-	return TRUE;
-}
+	//////////////////
+	// First we'll start by saving a copy of
+	// the hInstance parameter inside our
+	// "glob" of globals "g":
+	g.hInstance = hInstance;
 
-int DrawGLScene(GLvoid)											// Here's Where We Do All The Drawing
-{
-	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);         // Clear The Screen And The Depth Buffer
-	glLoadIdentity();											// Reset The Current Modelview Matrix
-	return TRUE;												// Everything Went OK
-}
-
-
-GLvoid KillGLWindow(GLvoid)
-{
-	if (fullscreen)
-	{
-		ChangeDisplaySettings(NULL, 0);
-		ShowCursor(TRUE);
-	}
-	if (hRC)
-	{
-		if (!wglMakeCurrent(NULL, NULL))
-		{
-			MessageBox(NULL, "Release Of DC And RC Failed.", "SHUTDOWN ERROR", MB_OK | MB_ICONINFORMATION);	
-		}
-		hRC = NULL;
-	}
-	if (hDC && !ReleaseDC(hWnd, hDC))
-	{
-		MessageBox(NULL, "Release Device Context Failed.", "SHUTDOWN ERROR", MB_OK | MB_ICONINFORMATION);
-		hDC = NULL;												// Set DC To NULL
-	}
-	if (hWnd && !DestroyWindow(hWnd))							// Are We Able To Destroy The Window?
-	{
-		MessageBox(NULL, "Could Not Release hWnd.", "SHUTDOWN ERROR", MB_OK | MB_ICONINFORMATION);
-		hWnd = NULL;											// Set hWnd To NULL
-	}
-	if (!UnregisterClass("OpenGL", hInstance))					// Are We Able To Unregister Class
-	{
-		MessageBox(NULL, "Could Not Unregister Class.", "SHUTDOWN ERROR", MB_OK | MB_ICONINFORMATION);
-		hInstance = NULL;										// Set hInstance To NULL
-	}
-}
-
-
-BOOL CreateGLWindow(char* title, int width, int height, int bits, bool fullscreenflag)
-{
-	GLuint PixelFormat;
+#pragma region part 1 - create a window
+	// The next few lines you should already
+	// be used to:  create a WNDCLASS
+	// that describes the properties of
+	// the window we're going to soon create.
+	// A.  Create the WNDCLASS
 	WNDCLASS wc;
-	DWORD dwExStyle;											//window extended style
-	DWORD dwStyle;												//window style
+	wc.cbClsExtra = 0;
+	wc.cbWndExtra = 0;
+	wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+	wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+	wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+	wc.hInstance = hInstance;
+	wc.lpfnWndProc = WndProc;
+	wc.lpszClassName = TEXT("Ellie");
+	wc.lpszMenuName = 0;
+	wc.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
 
-	RECT WindowRect;											// Grabs Rectangle Upper Left / Lower Right Values
-	WindowRect.left = (long)0;									// Set Left Value To 0
-	WindowRect.right = (long)width;								// Set Right Value To Requested Width
-	WindowRect.top = (long)0;									// Set Top Value To 0
-	WindowRect.bottom = (long)height;							// Set Bottom Value To Requested Height
+	// Register that class with the Windows O/S..
+	RegisterClass(&wc);
 
-	fullscreen = fullscreenflag;								// Set The Global Fullscreen Flag
+	/////////////////
+	// Ok, AT THIS POINT, we'd normally
+	// just go ahead and call CreateWindow().
+	// And we WILL call CreateWindow(), but
+	// there is something I must explain to
+	// you first.  That thing is the RECT structure.
 
-	hInstance = GetModuleHandle(NULL);							// Grab An Instance For Our Window
-	wc.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;				// Redraw On Move, And Own DC For Window
-	wc.lpfnWndProc = (WNDPROC)WndProc;							// WndProc Handles Messages
-	wc.cbClsExtra = 0;											// No Extra Window Data
-	wc.cbWndExtra = 0;											// No Extra Window Data
-	wc.hInstance = hInstance;									// Set The Instance
-	wc.hIcon = LoadIcon(NULL, IDI_WINLOGO);						// Load The Default Icon
-	wc.hCursor = LoadCursor(NULL, IDC_ARROW);					// Load The Arrow Pointer
-	wc.hbrBackground = NULL;									// No Background Required For GL
-	wc.lpszMenuName = NULL;										// We Don't Want A Menu
-	wc.lpszClassName = "OpenGL";								// Set The Class Name
+	/////////////////
+	// RECT:
+	//
+	// A RECT is just a C struct meant to represent
+	// a rectangle.
+	// 
+	// The RECT structure WILL DESCRIBE EXACTLY WHERE
+	// AND HOW WE WANT OUR WINDOW TO APPEAR WHEN WE
+	// CREATE IT.
+	//
+	//         TOP
+	//       --------
+	//       |      |
+	// LEFT  |      | RIGHT
+	//       --------
+	//        BOTTOM
+	//
+	// So, what we do is, we create the RECT
+	// struct for our window as follows:
+	RECT rect;
+	SetRect(&rect, 50,  // left
+		50,  // top
+		850, // right
+		650); // bottom
 
-	if (!RegisterClass(&wc))									// Attempt To Register The Window Class
+			  // Save width and height off.
+	g.width = rect.right - rect.left;
+	g.height = rect.bottom - rect.top;
+
+	// Adjust it.
+	AdjustWindowRect(&rect, WS_OVERLAPPEDWINDOW, false);
+
+	// AdjustWindowRect() expands the RECT
+	// so that the CLIENT AREA (drawable region)
+	// has EXACTLY the dimensions we specify
+	// in the incoming RECT.
+
+	// If you didn't just understand that, understand
+	// this:  "you have to call AdjustWindowRect()",
+	// and move on.  Its not THAT important, but its
+	// good for the performance of your app.
+
+	///////////////////
+	// NOW we call CreateWindow, using
+	// that adjusted RECT structure to
+	// specify the width and height of the window.
+	g.hwnd = CreateWindow(TEXT("Philip"),
+		TEXT("GL WINDOW!"),
+		WS_OVERLAPPEDWINDOW,
+		rect.left, rect.top,  // adjusted x, y positions
+		rect.right - rect.left, rect.bottom - rect.top,  // adjusted width and height
+		NULL, NULL,
+		hInstance, NULL);
+
+	// check to see that the window
+	// was created successfully!
+	if (g.hwnd == NULL)
 	{
-		MessageBox(NULL, "Failed To Register The Window Class.", "ERROR", MB_OK | MB_ICONEXCLAMATION);
-		return FALSE;											// Exit And Return FALSE
+		FatalAppExit(NULL, TEXT("CreateWindow() failed!"));
 	}
 
-	if (fullscreen)												// Attempt Fullscreen Mode?
+	// and show.
+	ShowWindow(g.hwnd, iCmdShow);
+#pragma endregion
+
+#pragma region part 2 - Get DC of window we just made
+	//2.  GET DC OF WINDOW, and keep it in our global
+	//    variable g.  We will NOT release this DC
+	//    until our app is about to exit.
+	g.hdc = GetDC(g.hwnd);
+
+	// If this keeping-DC-for-life-of-program-thing
+	// disturbs you as much as it disturbed me,
+	// GOOD LUCK in finding MS-based documentation to validate
+	// this practice!  All examples I've seen and
+	// Astle's OpenGL gaming book do it this way,
+	// so. . . I suppose its ok.
+
+	// One of the things I make sure to do is to specify
+	// CS_OWNDC when I create the window,
+	// so that Windows maintains a separate device context
+	// for my application's window.
+
+	// I haven't run into problems with this.  I don't
+	// think you should either.
+#pragma endregion
+
+#pragma region part 3 - SET PIXEL FORMAT OF HDC
+	//3.  SET PIXEL FORMAT OF HDC.
+	//
+	// We now have to set up the PIXELFORMAT
+	// of our HDC.
+
+	// A PIXEL FORMAT just describes the
+	// "qualities" that each pixel in the 
+	// window will have. 24 bit vs 16
+
+	// There are 3 substeps here:
+	//    A> create the PFD and set it up to describe
+	//       the pixel format we DESIRE (dream of having!)
+	//
+	//    B> call ChoosePixelFormat() to make windows
+	//       choose us the ID of the appropriate pixel format that
+	//       is CLOSEST to our dream pixel format.
+	//
+	//    C> Call SetPixelFormat() using the integer ID number
+	//       that ChoosePixelFormat() returned to us in step B>
+
+	// So let's do that:
+
+	////////////////////
+	// A> CREATE PFD:
+	PIXELFORMATDESCRIPTOR pfd = { 0 };  // create the pfd,
+										// and start it out with ALL ZEROs 
+
+										// So we set only the fields of the pfd we care about:
+	pfd.nSize = sizeof(PIXELFORMATDESCRIPTOR);    // just its size
+	pfd.nVersion = 1;   // always 1
+
+	pfd.dwFlags = PFD_SUPPORT_OPENGL |  // OpenGL support - not DirectDraw
+		PFD_DOUBLEBUFFER |				// double buffering support
+		PFD_DRAW_TO_WINDOW;				// draw to the app window, not to a bitmap image
+
+	pfd.iPixelType = PFD_TYPE_RGBA;		// red, green, blue, alpha for each pixel
+	pfd.cColorBits = 24;                // 24 bit == 8 bits for red, 8 for green, 8 for blue.
+										// This count of color bits EXCLUDES alpha.
+
+	pfd.cDepthBits = 32;                // 32 bits to measure pixel depth.  That's accurate!
+
+										///////////////////
+										// B> Alright!  We've filled out the pfd
+										// and it describes the way we want
+										// our pixels to appear on the screen.
+										// 
+										// Now this next step is a little bit weird.
+										// The thing is, there are only a couple of
+										// dozen ACCEPTABLE pixel formats in existence.
+										//
+										// In other words, the system MIGHT NOT
+										// be able to use a pixel format the likes
+										// of which you have described in your
+										// PIXELFORMATDESCRIPTOR.
+
+										// What to do?? It would be awful annoying
+										// to have to keep TRYING different
+										// PIXELFORMATDESCRIPTORS until we found
+										// one that actually WORKED on this system.
+
+										// So MSFT has a better solution.
+
+										// We'll make a call to a function called
+										// ChoosePixelFormat().  ChoosePixelFormat()
+										// will examine the PIXELFORMATDESCRIPTOR
+										// structure that you send it, then it will
+										// give you back an ID for the pixel format
+										// that MOST CLOSELY MATCHES the pixel format you
+										// SAID you wanted.
+
+	int chosenPixelFormat = ChoosePixelFormat(g.hdc, &pfd);
+	// what comes back from ChoosePixelFormat() is
+	// an integer identifier for a specific pixel
+	// format that Windows ALREADY knows about.
+	// If you got 0 back, then there was an error.
+	if (chosenPixelFormat == 0)
 	{
-		DEVMODE dmScreenSettings;                   // Device Mode
-		memset(&dmScreenSettings, 0, sizeof(dmScreenSettings));       // Makes Sure Memory's Cleared
-		dmScreenSettings.dmSize = sizeof(dmScreenSettings);       // Size Of The Devmode Structure
-		dmScreenSettings.dmPelsWidth = width;            // Selected Screen Width
-		dmScreenSettings.dmPelsHeight = height;           // Selected Screen Height
-		dmScreenSettings.dmBitsPerPel = bits;             // Selected Bits Per Pixel
-		dmScreenSettings.dmFields = DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT;
-		// Try To Set Selected Mode And Get Results.  NOTE: CDS_FULLSCREEN Gets Rid Of Start Bar.
-		if (ChangeDisplaySettings(&dmScreenSettings, CDS_FULLSCREEN) != DISP_CHANGE_SUCCESSFUL)
+		FatalAppExit(NULL, TEXT("ChoosePixelFormat() failed!"));
+	}
+
+	char b[100];
+	sprintf_s(b, "You got ID# %d as your pixelformat!\n", chosenPixelFormat);
+	MessageBoxA(NULL, b, "Your pixelformat", MB_OK);
+
+	/////////////////
+	// C> So finally, we call SetPixelFormat() using the integer ID number
+	// that ChoosePixelFormat() returned to us previously.
+	int result = SetPixelFormat(g.hdc, chosenPixelFormat, &pfd);
+
+	if (result == NULL)
+	{
+		FatalAppExit(NULL, TEXT("SetPixelFormat() failed!"));
+	}
+	// and that's all there is to setting
+	// the pixel format!
+	//////////
+#pragma endregion
+
+#pragma region part 4 - CREATE THE RENDERING CONTEXT
+	//4.  CREATE RENDERING CONTEXT (HGLRC).
+
+	// What's a rendering context?
+	// Its the "surface" that OpenGL
+	// will DRAW to.
+
+	// The HGLRC will be created
+	// such that it is COMPATIBLE
+	// with the hdc.
+
+	g.hglrc = wglCreateContext(g.hdc);
+	// Created the rendering context
+	// and saved handle to it in global 'g'.
+	//
+	// Wasn't that awfully easy to create
+	// such a complicated sounding thing?
+	///////////////
+#pragma endregion
+
+#pragma region part 5 - CONNECT THE RENDERING CONTEXT WITH THE DEVICE CONTEXT OF THE WINDOW
+	//5.  CONNECT THE RENDER CONTEXT (HGLRC)
+	//    WITH THE DEVICE CONTEXT (HDC) OF WINDOW.
+	wglMakeCurrent(g.hdc, g.hglrc);
+
+	//
+	// OPEN GL INIT COMPLETED!!
+	////////////////////////////
+#pragma endregion
+
+#pragma region message loop
+	MSG msg;
+
+	while (1)
+	{
+		if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
 		{
-			// If The Mode Fails, Offer Two Options.  Quit Or Run In A Window.
-			if (MessageBox(NULL, "The Requested Fullscreen Mode Is Not Supported By\nYour Video Card. Use Windowed Mode Instead?", "NeHe GL", MB_YESNO | MB_ICONEXCLAMATION) == IDYES)
+			if (msg.message == WM_QUIT)
 			{
-				fullscreen = FALSE;               // Select Windowed Mode (Fullscreen=FALSE)
+				break;
 			}
-			else
-			{
-				// Pop Up A Message Box Letting User Know The Program Is Closing.
-				MessageBox(NULL, "Program Will Now Close.", "ERROR", MB_OK | MB_ICONSTOP);
-				return FALSE;                   // Exit And Return FALSE
-			}
-		}
-	}
-	if (fullscreen)
-	{
-		dwExStyle = WS_EX_APPWINDOW;                  // Window Extended Style
-		dwStyle = WS_POPUP;                       // Windows Style
-		ShowCursor(FALSE);                      // Hide Mouse Pointer
-	}
-	else
-	{
-		dwExStyle = WS_EX_APPWINDOW | WS_EX_WINDOWEDGE;           // Window Extended Style
-		dwStyle = WS_OVERLAPPEDWINDOW;                    // Windows Style
-	}
 
-	AdjustWindowRectEx(&WindowRect, dwStyle, FALSE, dwExStyle);     // Adjust Window To True Requested Size
-	
-	if (!(hWnd = CreateWindowEx(dwExStyle,              // Extended Style For The Window
-		"OpenGL",               // Class Name
-		title,                  // Window Title
-		WS_CLIPSIBLINGS |           // Required Window Style
-		WS_CLIPCHILDREN |           // Required Window Style
-		dwStyle,                // Selected Window Style
-		0, 0,                   // Window Position
-		WindowRect.right - WindowRect.left,   // Calculate Adjusted Window Width
-		WindowRect.bottom - WindowRect.top,   // Calculate Adjusted Window Height
-		NULL,                   // No Parent Window
-		NULL,                   // No Menu
-		hInstance,              // Instance
-		NULL)))                 // Don't Pass Anything To WM_CREATE
-	{
-		KillGLWindow();                         // Reset The Display
-		MessageBox(NULL, "Window Creation Error.", "ERROR", MB_OK | MB_ICONEXCLAMATION);
-		return FALSE;                           // Return FALSE
-	}
-
-	static  PIXELFORMATDESCRIPTOR pfd =                  // pfd Tells Windows How We Want Things To Be
-	{
-		sizeof(PIXELFORMATDESCRIPTOR),                  // Size Of This Pixel Format Descriptor
-		1,                              // Version Number
-		PFD_DRAW_TO_WINDOW |                        // Format Must Support Window
-		PFD_SUPPORT_OPENGL |                        // Format Must Support OpenGL
-		PFD_DOUBLEBUFFER,                       // Must Support Double Buffering
-		PFD_TYPE_RGBA,                          // Request An RGBA Format
-		bits,                               // Select Our Color Depth
-		0, 0, 0, 0, 0, 0,                       // Color Bits Ignored
-		0,                              // No Alpha Buffer
-		0,                              // Shift Bit Ignored
-		0,                              // No Accumulation Buffer
-		0, 0, 0, 0,                         // Accumulation Bits Ignored
-		16,                             // 16Bit Z-Buffer (Depth Buffer)
-		0,                              // No Stencil Buffer
-		0,                              // No Auxiliary Buffer
-		PFD_MAIN_PLANE,                         // Main Drawing Layer
-		0,                              // Reserved
-		0, 0, 0                             // Layer Masks Ignored
-	};
-	//LOTS OF ERROR CHECKING
-	if (!(hDC = GetDC(hWnd)))                         // Did We Get A Device Context?
-	{
-		KillGLWindow();                         // Reset The Display
-		MessageBox(NULL, "Can't Create A GL Device Context.", "ERROR", MB_OK | MB_ICONEXCLAMATION);
-		return FALSE;                           // Return FALSE
-	}
-
-	if (!(PixelFormat = ChoosePixelFormat(hDC, &pfd)))             // Did Windows Find A Matching Pixel Format?
-	{
-		KillGLWindow();                         // Reset The Display
-		MessageBox(NULL, "Can't Find A Suitable PixelFormat.", "ERROR", MB_OK | MB_ICONEXCLAMATION);
-		return FALSE;                           // Return FALSE
-	}
-
-	if (!SetPixelFormat(hDC, PixelFormat, &pfd))               // Are We Able To Set The Pixel Format?
-	{
-		KillGLWindow();                         // Reset The Display
-		MessageBox(NULL, "Can't Set The PixelFormat.", "ERROR", MB_OK | MB_ICONEXCLAMATION);
-		return FALSE;                           // Return FALSE
-	}
-
-	if (!(hRC = wglCreateContext(hDC)))                   // Are We Able To Get A Rendering Context?
-	{
-		KillGLWindow();                         // Reset The Display
-		MessageBox(NULL, "Can't Create A GL Rendering Context.", "ERROR", MB_OK | MB_ICONEXCLAMATION);
-		return FALSE;                           // Return FALSE
-	}
-
-	if (!wglMakeCurrent(hDC, hRC))                        // Try To Activate The Rendering Context
-	{
-		KillGLWindow();                         // Reset The Display
-		MessageBox(NULL, "Can't Activate The GL Rendering Context.", "ERROR", MB_OK | MB_ICONEXCLAMATION);
-		return FALSE;                           // Return FALSE
-	}
-
-	//IF EVERYTHING WENT SMOOTHLY...
-	ShowWindow(hWnd, SW_SHOW);                       // Show The Window
-	SetForegroundWindow(hWnd);                      // Slightly Higher Priority
-	SetFocus(hWnd);                             // Sets Keyboard Focus To The Window
-	ReSizeGLScene(width, height);                       // Set Up Our Perspective GL Screen
-
-	if (!InitGL())                              // Initialize Our Newly Created GL Window
-	{
-		KillGLWindow();                         // Reset The Display
-		MessageBox(NULL, "Initialization Failed.", "ERROR", MB_OK | MB_ICONEXCLAMATION);
-		return FALSE;                           // Return FALSE
-	}
-	return TRUE;								//success!
-
-}
-
-LRESULT CALLBACK WndProc(HWND    hWnd,  // Handle For This Window
-	UINT    uMsg,						// Message For This Window
-	WPARAM  wParam,						// Additional Message Information
-	LPARAM  lParam)						// Additional Message Information
-{
-	switch (uMsg)                               // Check For Windows Messages
-	{
-
-	case WM_ACTIVATE:								// Watch For Window Activate Message
-	{
-		if (!HIWORD(wParam))                    // Check Minimization State
-		{
-			active = TRUE;						// Program Is Active
+			TranslateMessage(&msg);
+			DispatchMessage(&msg);
 		}
 		else
 		{
-			active = FALSE;						// Program Is No Longer Active
+			//6.  DRAW USING OPENGL.
+			// This region right here is the
+			// heart of our application.  THE MOST
+			// execution time is spent just repeating
+			// this draw() function.
+			draw();
 		}
+	}
+#pragma endregion
 
-		return 0;								// Return To The Message Loop
-	}
-	case WM_SYSCOMMAND:								// Intercept System Commands
-	{
-		switch (wParam)							// Check System Calls
-		{
-		case SC_SCREENSAVE:						// Screensaver Trying To Start?
-		case SC_MONITORPOWER:					// Monitor Trying To Enter Powersave?
-			return 0;							// Prevent From Happening
-		}
-		break;									// Exit
-	}
-	case WM_CLOSE:									// Did We Receive A Close Message?
-	{
-		PostQuitMessage(0);						// Send A Quit Message
-		return 0;								// Jump Back
-	}
-	case WM_KEYDOWN:								// Is A Key Being Held Down?
-	{
-		keys[wParam] = TRUE;                    // If So, Mark It As TRUE
-		return 0;								// Jump Back
-	}
-	case WM_KEYUP:									// Has A Key Been Released?
-	{
-		keys[wParam] = FALSE;                   // If So, Mark It As FALSE
-		return 0;								// Jump Back
-	}
-	case WM_SIZE:									// Resize The OpenGL Window
-	{
-		ReSizeGLScene(LOWORD(lParam), HIWORD(lParam));// LoWord=Width, HiWord=Height
-		return 0;								// Jump Back
-	}
-	// Pass All Unhandled Messages To DefWindowProc
-	return DefWindowProc(hWnd, uMsg, wParam, lParam);
-	}
+#pragma region clean up
+	// UNmake your rendering context (make it 'uncurrent')
+	wglMakeCurrent(NULL, NULL);
+
+	// Delete the rendering context, we no longer need it.
+	wglDeleteContext(g.hglrc);
+
+	// release your window's DC
+	ReleaseDC(g.hwnd, g.hdc);
+#pragma endregion
+
+	// and a cheesy fade exit
+	AnimateWindow(g.hwnd, 200, AW_HIDE | AW_BLEND);
+
+	return msg.wParam;
 }
 
-	//This is the entry point of our Windows Application. This is where we call our window creation routine, deal with window messages, and watch for human interaction.
-	int WINAPI WinMain(HINSTANCE   hInstance, HINSTANCE   hPrevInstance, LPSTR    lpCmdLine,     int  nCmdShow)     
-	{	
-		MSG msg;										
-		BOOL done = FALSE;                         
-		if (!CreateGLWindow("NeHe's OpenGL Framework", 640, 480, 16, fullscreen))
-		{
-			return 0;                           // Quit If Window Was Not Created
-		}
-		while (!done)                                // Loop That Runs Until done=TRUE
-		{
-			if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
-			{
-				if (msg.message == WM_QUIT)               // Have We Received A Quit Message?
-				{
-					done = TRUE;                  // If So done=TRUE
-				}
-				else                            // If Not, Deal With Window Messages
-				{
-					TranslateMessage(&msg);             // Translate The Message
-					DispatchMessage(&msg);              // Dispatch The Message
-				}
-			}
-			else                                // If There Are No Messages
-			{
-				// Draw The Scene.  Watch For ESC Key And Quit Messages From DrawGLScene()
-				if (active)                     // Program Active?
-				{
-					if (keys[VK_ESCAPE])                // Was ESC Pressed?
-					{
-						done = TRUE;              // ESC Signalled A Quit
-					}
-					else                        // Not Time To Quit, Update Screen
-					{
-						DrawGLScene();              // Draw The Scene
-						SwapBuffers(hDC);           // Swap Buffers (Double Buffering)
-					}
-				}
-			}
-		}
-		// Shutdown
-		KillGLWindow();                             // Kill The Window
-		return (msg.wParam);                            // Exit The Program
+////////////////////////
+// DRAWING FUNCTION
+void draw()
+{
+	// 1. set up the viewport
+	glViewport(0, 0, g.width, g.height); // set viewport
+										 // to be the whole width and height
+										 // of the CLIENT AREA (drawable region) of the window,
+										 // (the CLIENT AREA excludes the titlebar and the 
+										 // maximize/minimize buttons).
+
+										 // 2. projection matrix
+	glMatrixMode(GL_PROJECTION);
+	glLoadIdentity();
+	gluPerspective(45.0, (float)g.width / (float)g.height, 1, 1000);
+
+	// 3. viewing transformation
+	glMatrixMode(GL_MODELVIEW);
+	glLoadIdentity();
+
+	gluLookAt(0, 0, 10,
+		0, 0, 0,
+		0, 1, 0);
+
+	// 4. modelling transformation and drawing
+	glClearColor(0.5, 0, 0, 0);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+	static float i = 0.01f;
+	// Notice that 'i' is a STATIC variable.
+
+	// A 'static' variable is created ONCE
+	// when the function in which it sits first runs.
+
+	// The static variable will "LIVE ON"
+	// between seperate calls to the function
+	// in which it lives UNTIL THE PROGRAM ENDS.
+
+	i += 0.1f;     // increase i by 0.001 from its
+					 // it had on the LAST FUNCTION CALL to the draw() function
+
+	float c = cos(i);
+	float s = sin(i);
+
+	glBegin(GL_TRIANGLES);
+	glColor3f(c, 0, 0);      // red
+	glVertex3f(1 + c, 0 + s, 0);
+
+	glColor3f(c, s, 0);      // yellow
+	glVertex3f(0 + c, 1 + s, 0);
+
+	glColor3f(s, 0.1f, s);   // magenta
+	glVertex3f(-1 + c, 0 + s, 0);
+	glEnd();
+
+	//7.  SWAP BUFFERS.
+	SwapBuffers(g.hdc);
+	// Its important to realize that the backbuffer
+	// is intelligently managed by the HDC ON ITS OWN,
+	// so all's you gots to do is call SwapBuffers
+	// on the HDC of your window.
+}
+
+
+////////////////////////
+// WNDPROC
+// Notice that WndProc is very very neglected.
+// We hardly do anything with it!  That's because
+// we do all of our processing in the draw()
+// function.
+LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
+{
+	switch (message)
+	{
+	case WM_CREATE:
+		Beep(50, 10);
+		return 0;
+		break;
+
+	case WM_PAINT:
+	{
+		HDC hdc;
+		PAINTSTRUCT ps;
+		hdc = BeginPaint(hwnd, &ps);
+		// don't draw here.  would be waaay too slow.
+		// draw in the draw() function instead.
+		EndPaint(hwnd, &ps);
 	}
-	
+	return 0;
+	break;
+
+	case WM_KEYDOWN:
+		switch (wparam)
+		{
+		case VK_ESCAPE:
+			PostQuitMessage(0);
+			break;
+		default:
+			break;
+		}
+		return 0;
+
+	case WM_DESTROY:
+		PostQuitMessage(0);
+		return 0;
+		break;
+	}
+
+	return DefWindowProc(hwnd, message, wparam, lparam);
+}
+
+
+
+////////////////
+// END NOTES:
+//
+// Some good references:
+// WGL function ref on MSDN:
+// http://msdn2.microsoft.com/en-us/library/ms673957%28VS.85%29.aspx
+
+// MSDN example from 1994 (but still good!)
+// "OpenGL I: Quick Start"
+// http://msdn2.microsoft.com/en-us/library/ms970745.aspx
+
+
+//////////////////
+// QUICK Q&A (make sure you know what's going on):
+//
+// QUESTION:  What's the means by which we can draw
+//            to our window itself?
+//
+// ANSWER:  The HDC (HANDLE TO DEVICE CONTEXT).
+
+// QUESTION:  What's the means by which OpenGL can
+//            draw to the window?
+//
+// ANSWER:  USING that SAME HDC WE woulda used
+//          to draw to it!! (more to come on this now).
+
+/////////////////////
+// It IS possible to access the bits
+// of the output of OpenGL in 2 ways:
+//      1)  Use glReadPixels() to obtain
+//          the arrayful of pixels on the
+//          screen.  You can then save this
+//          to a .TGA or .BMP file easily.
+
+//      2)  Render to a BITMAP, then
+//          blit that bitmap to your HDC.
+//          There's a 1995 msdn article on this:
+//          "OpenGL VI: Rendering on DIBs with PFD_DRAW_TO_BITMAP"
+//          http://msdn2.microsoft.com/en-us/library/ms970768.aspx
